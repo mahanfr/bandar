@@ -1,3 +1,5 @@
+#include <linux/limits.h>
+#include <sys/types.h>
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,12 +9,16 @@
 #include <sys/mount.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/utsname.h>
+#include <sys/socket.h>
 #include <linux/sched.h>
 #include <sched.h>
 #include <sys/syscall.h>
 #include <fcntl.h>
 #include <time.h>
+
+#define STACK_SIZE (1024 * 1024)
 
 struct child_config {
     int argc;
@@ -60,6 +66,43 @@ int check_linux_version() {
     return 0;
 }
 
+#define USERNS_OFFSET 10000
+#define USERNS_COUNT 2000
+
+int handle_child_uid_map (pid_t child_pid, int fd) {
+    int uid_map = 0;
+    int has_userns = -1;
+    if (read(fd, &has_userns, sizeof(has_userns)) != sizeof(has_userns)) {
+        fprintf(stderr, "can not read from child process! \n");
+        return -1;
+    }
+    if (has_userns) {
+        char path[PATH_MAX] = {0};
+        for (char **file = (char * []) {"uid_map", "gid_map", 0}; *file; file++) {
+            if (snprintf(path, sizeof(path), "/proc/%d/%s", child_pid, *file) > sizeof(path)) {
+                fprintf(stderr, "sprintf too big? %m\n");
+                return -1;
+            }
+            fprintf(stdout, "writing %s...\n", path);
+            if ((uid_map = open(path, O_WRONLY)) == -1) {
+                fprintf(stderr, "filed to open %s: %m\n", path);
+                return -1;
+            }
+            if (dprintf(uid_map, "0 %d %d\n", USERNS_OFFSET, USERNS_COUNT) == -1) {
+                fprintf(stderr, "dprintf failed: %m\n");
+                close(uid_map);
+                return -1;
+            }
+            close(uid_map);
+        }
+        if (write(fd, &(int) {0}, sizeof(int)) != sizeof(int)) {
+            fprintf(stderr, "couldn't write to socket: %m\n");
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     struct child_config config = {0};
     int err = 0;
@@ -92,9 +135,42 @@ int main(int argc, char **argv) {
     config.hostname = hostname;
     printf("%s \n", config.hostname);
 
-    (void) check_linux_version();
+    if (check_linux_version() != 0) return 1;
 
     // NameSpace
+    if (socketpair(AF_LOCAL, SOCK_SEQPACKET, 0, sockets) != 0) {
+        fprintf(stderr, "socketpair failed: %m\n");
+        return 1;
+    }
+    if (fcntl(sockets[0], F_SETFD, FD_CLOEXEC) != 0) {
+        fprintf(stderr, "fcntl failed: %m\n");
+        goto err;
+    }
+    config.fd = sockets[1];
+    void *stack = 0;
+    if ((stack = malloc(STACK_SIZE)) == NULL) {
+        fprintf(stderr, "malloc failed: %m\n");
+        goto err;
+    }
+    // if (resources(&config)) {
+    // }
+    // int flags = CLONE_NEWNS
+    //     | CLONE_NEWCGROUP
+    //     | CLONE_NEWPID
+    //     | CLONE_NEWIPC
+    //     | CLONE_NEWNET
+    //     | CLONE_NEWUTS;
+    // if ((child_pid = clone(child, stack + STACK_SIZE, flags | SIGCHLD, &config) < 0)) {
+    //     fprintf(stderr, "clone failed! %m\n");
+    //     goto err;
+    // }
+    close(sockets[1]);
+    sockets[1] = 0;
 
+    // Seccessful Exit
     return 0;
+err:
+    if (sockets[0]) close(sockets[0]);
+    if (sockets[1]) close(sockets[1]);
+    return 1;
 }
