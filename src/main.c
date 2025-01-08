@@ -1,7 +1,8 @@
+#define _GNU_SOURCE
 #include <linux/limits.h>
 #include <sys/types.h>
-#define _GNU_SOURCE
 #include <stdio.h>
+#include <grp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
@@ -103,6 +104,57 @@ int handle_child_uid_map (pid_t child_pid, int fd) {
     return 0;
 }
 
+int userns(struct child_config *cfg) {
+    fprintf(stderr, "trying a user namespace...");
+    int has_userns = !unshare(CLONE_NEWUSER);
+    if (write(cfg->fd, &has_userns, sizeof(has_userns)) != sizeof(has_userns)) {
+        fprintf(stderr, "couldn't write to socket: %m\n");
+        return -1;
+    }
+    int result = 0;
+    if (read(cfg->fd, &result, sizeof(result)) != sizeof(result)) {
+        fprintf(stderr, "couldn't read form socket: %m\n");
+        return -1;
+    }
+    if (result) return -1;
+    if (has_userns) {
+        fprintf(stderr, "done\n");
+    } else {
+        fprintf(stderr, "unsupported? continueing.\n");
+    }
+    fprintf(stderr, "Switching to uid %d / gid %d...", cfg->uid, cfg->uid);
+    if (setgroups(1, &(gid_t) {cfg->uid}) ||
+            setresgid(cfg->uid, cfg->uid, cfg->uid) ||
+            setresuid(cfg->uid, cfg->uid, cfg->uid)) {
+        fprintf(stderr, "error setting groups: %m\n");
+        return -1;
+    }
+    fprintf(stderr, "done.\n");
+    return 0;
+}
+
+int child(void *arg) {
+    struct child_config *config = arg;
+    if (sethostname(config->hostname, strlen(config->hostname))
+    //        || mounts(config)
+              || userns(config)
+    //        || capebilities()
+    //        || syscalls() 
+    ) {
+        close(config->fd);
+        return -1;
+    }
+    if (close(config->fd) != 0) {
+        fprintf(stderr, "failed to close socket: %m\n");
+        return -1;
+    }
+    if (execve(config->argv[0], config->argv, NULL)) {
+        fprintf(stderr, "execve failed! %m.\n");
+        return -1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     struct child_config config = {0};
     int err = 0;
@@ -154,16 +206,16 @@ int main(int argc, char **argv) {
     }
     // if (resources(&config)) {
     // }
-    // int flags = CLONE_NEWNS
-    //     | CLONE_NEWCGROUP
-    //     | CLONE_NEWPID
-    //     | CLONE_NEWIPC
-    //     | CLONE_NEWNET
-    //     | CLONE_NEWUTS;
-    // if ((child_pid = clone(child, stack + STACK_SIZE, flags | SIGCHLD, &config) < 0)) {
-    //     fprintf(stderr, "clone failed! %m\n");
-    //     goto err;
-    // }
+    int flags = CLONE_NEWNS
+        | CLONE_NEWCGROUP
+        | CLONE_NEWPID
+        | CLONE_NEWIPC
+        | CLONE_NEWNET
+        | CLONE_NEWUTS;
+    if ((child_pid = clone(child, stack + STACK_SIZE, flags | SIGCHLD, &config) < 0)) {
+        fprintf(stderr, "clone failed! %m\n");
+        goto err;
+    }
     close(sockets[1]);
     sockets[1] = 0;
 
