@@ -22,17 +22,10 @@
 #include <time.h>
 #include <linux/limits.h>
 #include <linux/capability.h>
+#include "common.h"
+#include "resources.h"
 
 #define STACK_SIZE (1024 * 1024)
-
-struct child_config {
-    int argc;
-    uid_t uid;
-    int fd;
-    char *hostname;
-    char **argv;
-    char *mount_dir;
-};
 
 void call_usage(char* program_name) {
     fprintf(stderr, "Usage: %s -u -1 -m . -c /bin/sh ~\n", program_name);
@@ -71,7 +64,7 @@ int check_linux_version() {
     return 0;
 }
 
-int capabilities() {
+int set_child_capabilities() {
     fprintf(stderr, "Dropping capabilities...");
     int drop_caps[] = {
         CAP_AUDIT_CONTROL,
@@ -154,7 +147,7 @@ int handle_child_uid_map (pid_t child_pid, int fd) {
     return 0;
 }
 
-int userns(struct child_config *cfg) {
+int userns(child_config *cfg) {
     fprintf(stderr, "trying a user namespace...");
     int has_userns = !unshare(CLONE_NEWUSER);
     if (write(cfg->fd, &has_userns, sizeof(has_userns)) != sizeof(has_userns)) {
@@ -187,7 +180,7 @@ int pivot_root(const char* new_root, const char *put_old) {
     return syscall(SYS_pivot_root, new_root, put_old);
 }
 
-int mounts(struct child_config *config) {
+int mounts(child_config *config) {
     fprintf(stderr, "remounting everything with MS_PROVATE...");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) {
         fprintf(stderr, "failed! %m\n");
@@ -248,53 +241,52 @@ int disable_syscalls() {
     scmp_filter_ctx ctx = NULL;
     fprintf(stderr, "Filtering Syscalls...");
     if (!(ctx = seccomp_init(SCMP_ACT_ALLOW))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1,
-            SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1,
-            SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmod), 1,
-            SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmod), 1,
-            SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmodat), 1,
-            SCMP_A2(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmodat), 1,
-            SCMP_A2(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(unshare), 1,
-            SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(clone), 1,
-            SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ioctl), 1,
-            SCMP_A1(SCMP_CMP_MASKED_EQ, TIOCSTI, TIOCSTI))
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(keyctl), 0)
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(add_key), 0)
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(request_key), 0)
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ptrace), 0)
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(mbind), 0)
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(migrate_pages), 0)
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(move_pages), 0)
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(set_mempolicy), 0)
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(userfaultfd), 0)
-        || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(perf_event_open), 0)
-        || seccomp_attr_set(ctx, SCMP_FLTATR_CTL_NNP, 0)
-        || seccomp_load(ctx))
-    {
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1,
+        SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1,
+        SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmod), 1,
+        SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmod), 1,
+        SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmodat), 1,
+        SCMP_A2(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID))
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmodat), 1,
+        SCMP_A2(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID))
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(unshare), 1,
+        SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER))
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(clone), 1,
+        SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER))
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ioctl), 1,
+        SCMP_A1(SCMP_CMP_MASKED_EQ, TIOCSTI, TIOCSTI))
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(keyctl), 0)
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(add_key), 0)
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(request_key), 0)
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ptrace), 0)
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(mbind), 0)
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(migrate_pages), 0)
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(move_pages), 0)
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(set_mempolicy), 0)
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(userfaultfd), 0)
+    || seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(perf_event_open), 0)
+    || seccomp_attr_set(ctx, SCMP_FLTATR_CTL_NNP, 0)
+    || seccomp_load(ctx)) {
         if (ctx) seccomp_release(ctx);
         fprintf(stderr, "failed: %m\n");
         return 1;
     }
     seccomp_release(ctx);
-	fprintf(stderr, "done.\n");
-	return 0;
+    fprintf(stderr, "done.\n");
+    return 0;
 }
 
 int child(void *arg) {
-    struct child_config *config = arg;
+    child_config *config = arg;
     if (sethostname(config->hostname, strlen(config->hostname))
               || mounts(config)
               || userns(config)
-              || capabilities()
-    //        || syscalls()
+              || set_child_capabilities()
+              || disable_syscalls()
     ) {
         close(config->fd);
         return -1;
@@ -311,7 +303,7 @@ int child(void *arg) {
 }
 
 int main(int argc, char **argv) {
-    struct child_config config = {0};
+    child_config config = {0};
     int err = 0;
     int option = 0;
     int sockets[2] = {0};
@@ -359,8 +351,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "malloc failed: %m\n");
         goto err;
     }
-    // if (resources(&config)) {
-    // }
+    if (set_resources(&config)) {
+        goto err;
+    }
     int flags = CLONE_NEWNS
         | CLONE_NEWCGROUP
         | CLONE_NEWPID
