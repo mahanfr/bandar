@@ -6,7 +6,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/mahanfr/bandar">
-    <img src="assets/Bandar.png" alt="Bandar - Container engine" height="100">
+    <img src="assets/Bandar.png" alt="Bandar - Container engine" height="200">
   </a>
 
   <br />
