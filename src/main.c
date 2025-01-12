@@ -28,7 +28,7 @@
 #define STACK_SIZE (1024 * 1024)
 
 void call_usage(char* program_name) {
-    fprintf(stderr, "Usage: %s -u -1 -m . -c /bin/sh ~\n", program_name);
+    fprintf(stderr, "Usage: %s -u 1 -m . -c /bin/sh ~\n", program_name);
     exit(EXIT_FAILURE);
 }
 
@@ -36,11 +36,11 @@ void generate_hostname(char *buf, size_t len) {
     struct timespec now = {0};
     clock_gettime(CLOCK_MONOTONIC, &now);
     size_t ix = now.tv_nsec;
-    snprintf(buf, len, "%05lx-%s", now.tv_sec, "container");
+    snprintf(buf, len, "%05lx-%s", ix, "container");
 }
 
 int check_linux_version() {
-    fprintf(stdout, "validating Linux version...");
+    fprintf(stderr, "Validating Linux version...");
     struct utsname host = {0};
     if (uname(&host) != 0) {
         fprintf(stderr, "failed: %m\n");
@@ -56,11 +56,11 @@ int check_linux_version() {
         fprintf(stderr, "expected kernerl version >4.7.x: %s\n",host.release);
         return 1;
     }
-    if (strcmp("x86_64", host.machine)) {
+    if (strcmp("x86_64", host.machine) != 0) {
         fprintf(stderr, "expected arch x86_64: %s\n",host.machine);
         return 1;
     }
-    fprintf(stdout, "%s on %s.\n", host.release, host.machine);
+    fprintf(stderr, "%s on %s.\n", host.release, host.machine);
     return 0;
 }
 
@@ -123,11 +123,11 @@ int handle_child_uid_map (pid_t child_pid, int fd) {
     if (has_userns) {
         char path[PATH_MAX] = {0};
         for (char **file = (char * []) {"uid_map", "gid_map", 0}; *file; file++) {
-            if (snprintf(path, sizeof(path), "/proc/%d/%s", child_pid, *file) > sizeof(path)) {
+            if (snprintf(path, sizeof(path), "/proc/%d/%s", child_pid, *file) > (int) sizeof(path)) {
                 fprintf(stderr, "sprintf too big? %m\n");
                 return -1;
             }
-            fprintf(stdout, "writing %s...\n", path);
+            fprintf(stderr, "writing %s...\n", path);
             if ((uid_map = open(path, O_WRONLY)) == -1) {
                 fprintf(stderr, "filed to open %s: %m\n", path);
                 return -1;
@@ -148,31 +148,36 @@ int handle_child_uid_map (pid_t child_pid, int fd) {
 }
 
 int userns(child_config *cfg) {
-    fprintf(stderr, "trying a user namespace...");
+    printf("Trying a user namespace\n");
     int has_userns = !unshare(CLONE_NEWUSER);
     if (write(cfg->fd, &has_userns, sizeof(has_userns)) != sizeof(has_userns)) {
-        fprintf(stderr, "couldn't write to socket: %m\n");
+        fprintf(stderr, "Couldn't write to socket: %m\n");
         return -1;
     }
     int result = 0;
     if (read(cfg->fd, &result, sizeof(result)) != sizeof(result)) {
-        fprintf(stderr, "couldn't read form socket: %m\n");
+        fprintf(stderr, "Couldn't read form socket: %m\n");
         return -1;
     }
     if (result) return -1;
     if (has_userns) {
-        fprintf(stderr, "done\n");
+        printf("User name spaces has been set successfully\n");
     } else {
         fprintf(stderr, "unsupported? continueing.\n");
     }
-    fprintf(stderr, "Switching to uid %d / gid %d...", cfg->uid, cfg->uid);
-    if (setgroups(1, &(gid_t) {cfg->uid}) ||
-            setresgid(cfg->uid, cfg->uid, cfg->uid) ||
-            setresuid(cfg->uid, cfg->uid, cfg->uid)) {
-        fprintf(stderr, "error setting groups: %m\n");
+    printf("Switching to uid %d / gid %d\n", cfg->uid, cfg->uid);
+    if (setgroups(1, &(gid_t) {cfg->uid})) {
+        fprintf(stderr, "Error setting groups: %m\n");
         return -1;
     }
-    fprintf(stderr, "done.\n");
+    if (setresgid(cfg->uid, cfg->uid, cfg->uid)) {
+        fprintf(stderr, "Error setting real, effective and savied gid: %m\n");
+        return -1;
+    }
+    if (setresuid(cfg->uid, cfg->uid, cfg->uid)) {
+        fprintf(stderr, "Error setting real, effective and savied uid: %m\n");
+        return -1;
+    }
     return 0;
 }
 
@@ -181,57 +186,57 @@ int pivot_root(const char* new_root, const char *put_old) {
 }
 
 int mounts(child_config *config) {
-    fprintf(stderr, "remounting everything with MS_PROVATE...");
+    printf("Remounting everything with MS_PRIVATE\n");
+    fflush(stdout);
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) {
-        fprintf(stderr, "failed! %m\n");
+        fprintf(stderr, "Remounting failed: %m\n");
         return -1;
     }
-    fprintf(stderr, "remounted.\n");
 
-    fprintf(stderr, "Making a temp directory and bind mount there...");
-    char mount_dir[] = "/temp/temp.XXXXXX";
-    if (!mkdtemp(mount_dir)) {
-        fprintf(stderr, "failed making a directory!\n");
+    printf("Making a temp directory and bind mount\n");
+    fflush(stdout);
+    char mount_dir[] = "/tmp/tmp.XXXXXX";
+    if (mkdtemp(mount_dir) == NULL) {
+        fprintf(stderr, "Failed making a directory: %m\n");
         return -1;
     }
     if (mount(config->mount_dir, mount_dir, NULL, MS_BIND | MS_PRIVATE, NULL)) {
-        fprintf(stderr, "bind mount failed!\n");
+        fprintf(stderr, "Bind mount failed: %m\n");
         return -1;
     }
-    char inner_mount_dir[] = "/temp/temp.XXXXXX/oldroot.XXXXXX";
+    char inner_mount_dir[] = "/tmp/tmp.XXXXXX/oldroot.XXXXXX";
     memcpy(inner_mount_dir, mount_dir, sizeof(mount_dir) - 1);
-    if (!mkdtemp(inner_mount_dir)) {
-        fprintf(stderr, "failed making the inner directory!\n");
+    if (mkdtemp(inner_mount_dir) == NULL) {
+        fprintf(stderr, "Failed making the inner directory: %m\n");
         return -1;
     }
-    fprintf(stderr, "done.\n");
 
-    fprintf(stderr, "Pivoting root...");
+    printf("Pivoting root\n");
+    fflush(stdout);
     if (pivot_root(mount_dir, inner_mount_dir)) {
-        fprintf(stderr, "failed!\n");
+        fprintf(stderr, "Pivoting Root failed: %m\n");
         return -1;
     }
-    fprintf(stderr, "done.\n");
 
     char* old_root_dir = basename(inner_mount_dir);
     // WTF IS THIS
     char old_root[sizeof(inner_mount_dir) + 1] = {"/"};
     strcpy(&old_root[1], old_root_dir);
 
-    fprintf(stderr, "Unmounting %s...", old_root);
+    printf("Unmounting %s\n", old_root);
+    fflush(stdout);
     if (chdir("/") != 0) {
-        fprintf(stderr, "chdir failed! %m\n");
+        fprintf(stderr, "Chdir failed: %m\n");
         return -1;
     }
     if (umount2(old_root, MNT_DETACH)) {
-        fprintf(stderr, "unmount failed! %m\n");
+        fprintf(stderr, "Unmount failed: %m\n");
         return -1;
     }
     if (rmdir(old_root)) {
-        fprintf(stderr, "rmdir failed! %m\n");
+        fprintf(stderr, "Remove dir failed: %m\n");
         return -1;
     }
-    fprintf(stderr, "done.\n");
     return 0;
 }
 
@@ -288,6 +293,7 @@ int child(void *arg) {
               || set_child_capabilities()
               || disable_syscalls()
     ) {
+        fprintf(stderr, "Setting up child process failed!\n");
         close(config->fd);
         return -1;
     }
@@ -303,8 +309,8 @@ int child(void *arg) {
 }
 
 int main(int argc, char **argv) {
+    setlinebuf(stdout);
     child_config config = {0};
-    int err = 0;
     int option = 0;
     int sockets[2] = {0};
     pid_t child_pid = 0;
@@ -343,17 +349,17 @@ int main(int argc, char **argv) {
     }
     if (fcntl(sockets[0], F_SETFD, FD_CLOEXEC) != 0) {
         fprintf(stderr, "fcntl failed: %m\n");
-        goto err;
+        goto cl_socket;
     }
     config.fd = sockets[1];
     void *stack = 0;
     if ((stack = malloc(STACK_SIZE)) == NULL) {
         fprintf(stderr, "malloc failed: %m\n");
-        goto err;
+        goto cl_socket;
     }
-    if (set_resources(&config)) {
-        goto err;
-    }
+    // if (set_resources(&config)) {
+    //     goto cl_resources;
+    // }
     int flags = CLONE_NEWNS
         | CLONE_NEWCGROUP
         | CLONE_NEWPID
@@ -362,14 +368,18 @@ int main(int argc, char **argv) {
         | CLONE_NEWUTS;
     if ((child_pid = clone(child, stack + STACK_SIZE, flags | SIGCHLD, &config) < 0)) {
         fprintf(stderr, "clone failed! %m\n");
-        goto err;
+        goto cl_socket;
     }
+    sleep(2);
     close(sockets[1]);
     sockets[1] = 0;
 
     // Seccessful Exit
     return 0;
-err:
+
+// cl_resources:
+//     free_resources(&config);
+cl_socket:
     if (sockets[0]) close(sockets[0]);
     if (sockets[1]) close(sockets[1]);
     return 1;

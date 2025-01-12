@@ -6,6 +6,8 @@
 
 #define PanicLog(s) fprintf(stderr, "%s:%d - %s", __FILE__, __LINE__, s)
 
+void BLog(const char *format, ...);
+
 typedef struct {
     int argc;
     uid_t uid;

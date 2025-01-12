@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra
-LIBS =
+CFLAGS = -Wall -Werror -Wextra
+LIBS = -lcap -lseccomp
 PROJECT_DIR := .
 SRC_DIR = $(PROJECT_DIR)/src
 PROGRAM_ENTRY = $(SRC_DIR)/main.c
@@ -18,10 +18,10 @@ bandar: always $(TARGET)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@ echo CC $^
-	$(CC) $(CFLAGS) -c $^ -o $@ $(CLIBS)
+	@ $(CC) $(CFLAGS) -c $^ -o $@ $(LIBS)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(CLIBS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 	@ echo DONE. CREATED $@
 
 always:
