@@ -1,13 +1,24 @@
 [![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![MIT License][license-shield]][license-url]
-[![LinkedIn][linkedin-shield]][linkedin-url]
 
-# bandar
+<br />
+<div align="center">
+  <a href="https://github.com/mahanfr/bandar">
+    <img src="assets/Bandar.png" alt="Bandar - Container engine" height="100">
+  </a>
 
-Open Source Container Engine.
+  <br />
+  <p align="center">
+    Bandar is an open-source container engine 
+    <br />
+    <a href="https://github.com/mahanfr/bandar/issues">Report Bug</a>
+    ·
+    <a href="https://mahanfr.github.io/bandar/">Documentaion</a>
+  </p>
+</div>
+
 
 Bandar is an open-source container engine designed to provide
 a lightweight and efficient solution for containerization.
@@ -28,7 +39,7 @@ cd bandar
 2. Build the project:
 
 ```sh
-    make
+make
 ```
 
 ## Usage
@@ -38,9 +49,9 @@ To use Bandar, follow these steps:
 1. To Start the container engine:
 
 ``` sh
-    ./build/bandar -u 0 -m . -c /bin/sh
+./build/bandar -u 0 -m . -c /bin/sh
 ```
-options:
+Command line options:
 
     -u  specify gid and uid
     -m  path to image
