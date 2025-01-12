@@ -155,10 +155,10 @@ int userns(child_config *cfg) {
         return -1;
     }
     int result = 0;
-    if (read(cfg->fd, &result, sizeof(result)) != sizeof(result)) {
-        fprintf(stderr, "Couldn't read form socket: %m\n");
-        return -1;
-    }
+    // if (read(cfg->fd, &result, sizeof(result)) != sizeof(result)) {
+    //     fprintf(stderr, "Couldn't read form socket: %m\n");
+    //     return -1;
+    // }
     if (result) return -1;
     if (has_userns) {
         printf("User name spaces has been set successfully\n");
@@ -166,7 +166,7 @@ int userns(child_config *cfg) {
         fprintf(stderr, "unsupported? continueing.\n");
     }
     printf("Switching to uid %d / gid %d\n", cfg->uid, cfg->uid);
-    if (setgroups(1, &(gid_t) {cfg->uid})) {
+    if (setgroups(1, &(gid_t) {cfg->uid}) == -1) {
         fprintf(stderr, "Error setting groups: %m\n");
         return -1;
     }
@@ -360,6 +360,7 @@ int main(int argc, char **argv) {
     // if (set_resources(&config)) {
     //     goto cl_resources;
     // }
+    
     int flags = CLONE_NEWNS
         | CLONE_NEWCGROUP
         | CLONE_NEWPID
@@ -370,7 +371,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "clone failed! %m\n");
         goto cl_socket;
     }
-    sleep(2);
+    if (waitpid(child_pid, NULL, 0) == -1) {
+        fprintf(stderr, "Failed to wait for pid! %m\n");
+        goto cl_socket;
+    }
     close(sockets[1]);
     sockets[1] = 0;
 
